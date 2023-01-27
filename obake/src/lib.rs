@@ -113,7 +113,7 @@ pub trait Versioned: Sized {
 /// Not intended to be hand-implemented, use [`versioned`] to derive it.
 pub trait VersionTagged<T>: From<T> + Into<T> {
     /// The semantic version number corresponding to the tag of a particular instance.
-    fn version_str(&self) -> &'static str;
+    fn version(&self) -> u32;
 }
 
 /// Short-hand for referring to the version-tagged representation of a [`versioned`] data-structre.
@@ -129,7 +129,7 @@ where
     T: Versioned,
 {
     /// The semantic version number of this version.
-    const VERSION: &'static str;
+    const VERSION: u32;
 
     /// Trys to convert the version-tagged representation of `T` into this particular version.
     ///
@@ -178,7 +178,7 @@ where
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct VersionMismatch {
     /// The expected version.
-    pub expected: &'static str,
+    pub expected: u32,
     /// The version found.
-    pub found: &'static str,
+    pub found: u32,
 }

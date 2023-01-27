@@ -1,3 +1,4 @@
+use proc_macro2::Literal;
 use syn::Result;
 
 use quote::{format_ident, quote, ToTokens, TokenStreamExt};
@@ -14,23 +15,17 @@ macro_rules! try_expand {
 }
 
 trait VersionExt {
-    fn version(&self, version: &Version) -> Self;
+    fn version(&self, version: u32) -> Self;
 }
 
 impl VersionExt for syn::Ident {
-    fn version(&self, version: &Version) -> Self {
-        format_ident!(
-            "{}_v{}_{}_{}",
-            self,
-            version.major,
-            version.minor,
-            version.patch
-        )
+    fn version(&self, version: u32) -> Self {
+        format_ident!("{}V{}", self, version)
     }
 }
 
 impl VersionedField {
-    fn expand_ty_versioned(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_ty_versioned(&self, version: u32) -> Result<TokenStream2> {
         if self.attrs.inherits().next().is_none() {
             let ty = &self.ty;
             return Ok(quote!(#ty));
@@ -51,7 +46,7 @@ impl VersionedField {
         ))
     }
 
-    fn expand_version(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_version(&self, version: u32) -> Result<TokenStream2> {
         if let Some(derive) = self.attrs.derives().next() {
             return Err(syn::Error::new(
                 derive.span,
@@ -71,12 +66,12 @@ impl VersionedField {
 
         // If we have no `#[obake(cfg(...))]` attributes, default to `#[obake(cfg("*"))]`
         if reqs.is_empty() {
-            reqs.push(VersionReq::STAR);
+            reqs.push(u32::MIN..u32::MAX);
         }
 
         // If we can't find a matching `#[obake(cfg(...))]` attribute, this field is disabled
         // in this version, so return nothing
-        if !reqs.iter().any(|req| req.matches(version)) {
+        if !reqs.iter().any(|req| req.contains(&version)) {
             return Ok(quote!());
         }
 
@@ -94,7 +89,7 @@ impl VersionedField {
 }
 
 impl VersionedFields {
-    fn expand_version(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_version(&self, version: u32) -> Result<TokenStream2> {
         let fields = self
             .fields
             .iter()
@@ -109,7 +104,7 @@ impl VersionedFields {
 }
 
 impl VersionedVariantFields {
-    fn expand_version(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_version(&self, version: u32) -> Result<TokenStream2> {
         Ok(match &self {
             Self::Unnamed(unnamed) => quote!(#unnamed),
             Self::Named(named) => {
@@ -122,7 +117,7 @@ impl VersionedVariantFields {
 }
 
 impl VersionedVariant {
-    fn expand_version(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_version(&self, version: u32) -> Result<TokenStream2> {
         if let Some(derive) = self.attrs.inherits().next() {
             return Err(syn::Error::new(
                 derive.span,
@@ -149,12 +144,12 @@ impl VersionedVariant {
 
         // If we have no `#[obake(cfg(...))]` attributes, default to `#[obake(cfg("*"))]`
         if reqs.is_empty() {
-            reqs.push(VersionReq::STAR);
+            reqs.push(u32::MIN..u32::MAX);
         }
 
         // If we can't find a matching `#[obake(cfg(...))]` variant, this field is disabled
         // in this version, so return nothing
-        if !reqs.iter().any(|req| req.matches(version)) {
+        if !reqs.iter().any(|req| req.contains(&version)) {
             return Ok(quote!());
         }
 
@@ -170,7 +165,7 @@ impl VersionedVariant {
 }
 
 impl VersionedVariants {
-    fn expand_version(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_version(&self, version: u32) -> Result<TokenStream2> {
         let variants = self
             .variants
             .iter()
@@ -236,16 +231,15 @@ impl VersionedItem {
         self.attrs
             .versions()
             .last()
-            .map(|attr| self.ident().version(&attr.version))
+            .map(|attr| self.ident().version(attr.version))
     }
 
     fn versioned_ident(&self) -> syn::Ident {
         format_ident!("Versioned{}", self.ident())
     }
 
-    fn expand_version(&self, version: &Version) -> Result<TokenStream2> {
+    fn expand_version(&self, version: u32) -> Result<TokenStream2> {
         let current = self.ident();
-        let version_str = &version.to_string();
         let attrs = self.attrs.attrs();
         let vis = &self.vis;
         let ident = self.ident().version(version);
@@ -270,7 +264,7 @@ impl VersionedItem {
 
             #[automatically_derived]
             impl ::obake::VersionOf<#current> for #ident {
-                const VERSION: &'static str = #version_str;
+                const VERSION: u32 = #version;
 
                 #[inline]
                 fn try_from_versioned(
@@ -281,7 +275,7 @@ impl VersionedItem {
                         ::obake::AnyVersion::<#current>::#ident(x) => ::core::result::Result::Ok(x),
                         other => ::core::result::Result::Err(::obake::VersionMismatch {
                             expected: Self::VERSION,
-                            found: other.version_str(),
+                            found: other.version(),
                         }),
                     }
                 }
@@ -308,7 +302,7 @@ impl VersionedItem {
     fn expand_variants(&self) -> impl Iterator<Item = syn::Ident> + '_ {
         self.attrs
             .versions()
-            .map(move |attr| self.ident().version(&attr.version))
+            .map(move |attr| self.ident().version(attr.version))
     }
 
     fn expand_versioned_enum(&self) -> TokenStream2 {
@@ -347,7 +341,7 @@ impl VersionedItem {
             .skip(1)
             .zip(self.expand_variants())
             .map(|(attr, prev)| {
-                let next = ident.version(&attr.version);
+                let next = ident.version(attr.version);
                 quote!(#enum_ident::#prev(x) => #enum_ident::#next(x.into()),)
             });
 
@@ -388,7 +382,7 @@ impl VersionedItem {
             #[automatically_derived]
             impl ::obake::VersionTagged<#ident> for #enum_ident {
                 #[inline]
-                fn version_str(&self) -> &'static str {
+                fn version(&self) -> u32 {
                     use ::obake::VersionOf;
                     match self {
                         #(#enum_ident::#variants(_) => #variants::VERSION,)*
@@ -405,7 +399,7 @@ impl VersionedItem {
             .versions()
             .zip(self.expand_variants())
             .map(|(attr, variant)| {
-                let version = attr.version.to_string();
+                let version = Literal::u32_unsuffixed(attr.version);
                 quote!([#version] => { #variant };)
             });
 
@@ -422,7 +416,7 @@ impl VersionedItem {
         let versions = try_expand!(self.extract_versions());
         let defs = try_expand!(versions
             .iter()
-            .map(|attr| self.expand_version(&attr.version))
+            .map(|attr| self.expand_version(attr.version))
             .collect::<Result<Vec<_>>>())
         .into_iter();
 

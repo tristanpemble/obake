@@ -1,7 +1,9 @@
 use std::convert::{TryFrom, TryInto};
+use std::ops::Range;
 
+use syn::{braced, Expr, Lit, parenthesized, RangeLimits, Token};
 use syn::parse::{Parse, ParseStream, Result};
-use syn::{braced, parenthesized, Token};
+use syn::spanned::Spanned;
 
 use crate::internal::*;
 
@@ -9,10 +11,10 @@ const OBAKE: &str = "obake";
 
 impl Parse for VersionAttr {
     fn parse(input: ParseStream) -> Result<Self> {
-        let version_str = input.parse::<syn::LitStr>()?;
-        let span = version_str.span();
-        let version = Version::parse(&version_str.value())
-            .map_err(|err| syn::Error::new(version_str.span(), err))?;
+        let version_int = input.parse::<syn::LitInt>()?;
+        let span = version_int.span();
+        let version = version_int.base10_parse()
+                                 .map_err(|err| syn::Error::new(version_int.span(), err))?;
 
         Ok(Self { version, span })
     }
@@ -20,12 +22,61 @@ impl Parse for VersionAttr {
 
 impl Parse for CfgAttr {
     fn parse(input: ParseStream) -> Result<Self> {
-        let req_str = input.parse::<syn::LitStr>()?;
-        let span = req_str.span();
-        let req = VersionReq::parse(&req_str.value())
-            .map_err(|err| syn::Error::new(req_str.span(), err))?;
+        let expr = input.parse::<Expr>()?;
 
-        Ok(Self { req, span })
+        match expr {
+            Expr::Range(req_range) => {
+                let span = req_range.span();
+                let start = match req_range.from {
+                    Some(v) => match *v {
+                        Expr::Lit(expr_lit) => match expr_lit.lit {
+                            Lit::Int(lit_int) => {
+                                lit_int.base10_parse()
+                                       .map_err(|err| syn::Error::new(lit_int.span(), err))?
+                            }
+                            _ => return Err(syn::Error::new(span, "expected integer literal for range start"))
+                        },
+                        _ => return Err(syn::Error::new(span, "expected integer literal for range start"))
+                    },
+                    _ => u32::MIN,
+                };
+                let end = match req_range.to {
+                    Some(v) => match *v {
+                        Expr::Lit(expr_lit) => match expr_lit.lit {
+                            Lit::Int(lit_int) => {
+                                lit_int.base10_parse()
+                                       .map_err(|err| syn::Error::new(lit_int.span(), err))?
+                            }
+                            _ => return Err(syn::Error::new(span, "expected integer literal for range end")),
+                        },
+                        _ => return Err(syn::Error::new(span, "expected integer literal for range end")),
+                    },
+                    _ => u32::MAX,
+                };
+                let req = Range {
+                    start,
+                    end: match req_range.limits {
+                        RangeLimits::HalfOpen(_) => end,
+                        RangeLimits::Closed(_) => end + 1,
+                    },
+                };
+                Ok(Self { req, span })
+            }
+            Expr::Lit(expr_lit) => match expr_lit.lit {
+                Lit::Int(int) => {
+                    let start = int.base10_parse()
+                                   .map_err(|err| syn::Error::new(int.span(), err))?;
+                    let req = Range {
+                        start,
+                        end: start + 1,
+                    };
+                    let span = int.span();
+                    Ok(Self { req, span })
+                }
+                _ => return Err(syn::Error::new(expr_lit.span(), "expected a range or an int literal"))
+            },
+            _ => return Err(syn::Error::new(expr.span(), "expected a range or an int literal"))
+        }
     }
 }
 
@@ -66,7 +117,7 @@ impl Parse for ObakeAttribute {
                 return Err(syn::Error::new(
                     ident.span(),
                     "unrecognised `obake` helper attribute",
-                ))
+                ));
             }
         })
     }

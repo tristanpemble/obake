@@ -1,13 +1,12 @@
 use syn::Token;
 
 pub use proc_macro::TokenStream;
+use std::ops::Range;
 pub use proc_macro2::{Span, TokenStream as TokenStream2};
-
-pub use semver::{Version, VersionReq};
 
 #[derive(Clone)]
 pub struct VersionAttr {
-    pub version: Version,
+    pub version: u32,
     pub span: Span,
 }
 
@@ -33,7 +32,7 @@ impl Ord for VersionAttr {
 
 #[derive(Clone)]
 pub struct CfgAttr {
-    pub req: VersionReq,
+    pub req: Range<u32>,
     pub span: Span,
 }
 
